@@ -1,0 +1,136 @@
+Gene,Annotation,Figure
+Tcf7,Transcription Factors,Main1e
+Id3,Transcription Factors,Main1e
+Bcl6,Transcription Factors,Main1e
+Foxo1,Transcription Factors,Main1e
+Hif1a,Transcription Factors,Main1e
+Nr4a1,Transcription Factors,Main1e
+Eomes,Transcription Factors,Main1e
+Batf,Transcription Factors,Main1e
+Klf2,Transcription Factors,Main1e
+Tbx21,Transcription Factors,Main1e
+Prdm11,Transcription Factors,Main1e
+Id2,Transcription Factors,Main1e
+Ccr7,Migration,Main1e
+Cd69,Migration,Main1e
+Cxcr5,Migration,Main1e
+Xcl1,Migration,Main1e
+Xcr1,Migration,Main1e
+Itgae,Migration,Main1e
+Cxcr3,Migration,Main1e
+Itga2,Migration,Main1e
+Itgax,Migration,Main1e
+Ccr5,Migration,Main1e
+Itga4,Migration,Main1e
+Cx3cr1,Migration,Main1e
+S1pr5,Migration,Main1e
+Itgb1,Migration,Main1e
+S1pr1,Migration,Main1e
+Etfb,Oxidative Phosphorylation,Main1g
+Cox8a,Oxidative Phosphorylation,Main1g
+Cox5a,Oxidative Phosphorylation,Main1g
+Ndufs4,Oxidative Phosphorylation,Main1g
+Ldha,Oxidative Phosphorylation,Main1g
+Cox6a1,Oxidative Phosphorylation,Main1g
+Cox4i1,Oxidative Phosphorylation,Main1g
+Cox7b,Oxidative Phosphorylation,Main1g
+Ndufc2,Oxidative Phosphorylation,Main1g
+Cox7a2,Oxidative Phosphorylation,Main1g
+Cd5l,Cholesterol Metabolism,Main1g
+Apoe,Cholesterol Metabolism,Main1g
+Dagla,Cholesterol Metabolism,Main1g
+Pparg,Cholesterol Metabolism,Main1g
+Fabp5,Cholesterol Metabolism,Main1g
+Actg1,Cholesterol Metabolism,Main1g
+Tmem97,Cholesterol Metabolism,Main1g
+Lgmn,Cholesterol Metabolism,Main1g
+Stard4,Cholesterol Metabolism,Main1g
+S100a11,Cholesterol Metabolism,Main1g
+Pdk3,Cholesterol Metabolism,Main1g
+Ldlr,Cholesterol Metabolism,Main1g
+Idi1,Cholesterol Metabolism,Main1g
+Lgals1,Fatty Acid Metabolism,Main1g
+Hpgds,Fatty Acid Metabolism,Main1g
+S100a10,Fatty Acid Metabolism,Main1g
+Ncaph2,Fatty Acid Metabolism,Main1g
+Fh1,Fatty Acid Metabolism,Main1g
+Nbn,Fatty Acid Metabolism,Main1g
+Sms,Fatty Acid Metabolism,Main1g
+Mif,Fatty Acid Metabolism,Main1g
+Acot8,Fatty Acid Metabolism,Main1g
+Cd248,Ion Binding,Main1g
+Clgn,Ion Binding,Main1g
+Mt1,Ion Binding,Main1g
+Mt2,Ion Binding,Main1g
+Mt3,Ion Binding,Main1g
+Adprh,Ion Binding,Main1g
+Efcab6,Ion Binding,Main1g
+Nr1h3,Transcriptional Regulation,Main1g
+Ezh2,Transcriptional Regulation,Main1g
+Smarcc1,Transcriptional Regulation,Main1g
+Aes,Transcriptional Regulation,Main1g
+Taf10,Transcriptional Regulation,Main1g
+Gzmb,CTL Function,Supp1e
+Fasl,CTL Function,Supp1e
+Gzma,CTL Function,Supp1e
+Prf1,CTL Function,Supp1e
+Tlr1,TLRs,Supp1e
+Tlr2,TLRs,Supp1e
+Tlr3,TLRs,Supp1e
+Tlr11,TLRs,Supp1e
+Tlr12,TLRs,Supp1e
+Tnfrsf9,Co-stimulation,Supp1e
+Cd28,Co-stimulation,Supp1e
+Cd27,Co-stimulation,Supp1e
+Icos,Co-stimulation,Supp1e
+Tnfrsf4,Co-stimulation,Supp1e
+Tnfrsf14,Co-stimulation,Supp1e
+Ccr7,Migration,Supp1e
+Cd69,Migration,Supp1e
+Cxcr5,Migration,Supp1e
+Xcl1,Migration,Supp1e
+Xcr1,Migration,Supp1e
+Itgae,Migration,Supp1e
+Cxcr3,Migration,Supp1e
+Itga2,Migration,Supp1e
+Itgax,Migration,Supp1e
+Ccr5,Migration,Supp1e
+Itga4,Migration,Supp1e
+Cx3cr1,Migration,Supp1e
+S1pr5,Migration,Supp1e
+Itgb1,Migration,Supp1e
+S1pr1,Migration,Supp1e
+Tcf7,Transcription Factors,Supp1e
+Id3,Transcription Factors,Supp1e
+Bcl6,Transcription Factors,Supp1e
+Foxo1,Transcription Factors,Supp1e
+Hif1a,Transcription Factors,Supp1e
+Nr4a1,Transcription Factors,Supp1e
+Eomes,Transcription Factors,Supp1e
+Batf,Transcription Factors,Supp1e
+Klf2,Transcription Factors,Supp1e
+Tbx21,Transcription Factors,Supp1e
+Prdm11,Transcription Factors,Supp1e
+Id2,Transcription Factors,Supp1e
+Il23r,Cytokine Receptors,Supp1e
+Ifnar2,Cytokine Receptors,Supp1e
+Il6ra,Cytokine Receptors,Supp1e
+Il27ra,Cytokine Receptors,Supp1e
+Il7r,Cytokine Receptors,Supp1e
+Ifnar1,Cytokine Receptors,Supp1e
+Il4ra,Cytokine Receptors,Supp1e
+Il21r,Cytokine Receptors,Supp1e
+Il2rb,Cytokine Receptors,Supp1e
+Il18bp,Cytokine Receptors,Supp1e
+Ifngr2,Cytokine Receptors,Supp1e
+Il13ra1,Cytokine Receptors,Supp1e
+Il20ra,Cytokine Receptors,Supp1e
+Il20rb,Cytokine Receptors,Supp1e
+Il12rb1,Cytokine Receptors,Supp1e
+Il3ra,Cytokine Receptors,Supp1e
+Il17ra,Cytokine Receptors,Supp1e
+Il18rap,Cytokine Receptors,Supp1e
+Il10rb,Cytokine Receptors,Supp1e
+Il12rb2,Cytokine Receptors,Supp1e
+Ifngr1,Cytokine Receptors,Supp1e
+Il2rg,Cytokine Receptors,Supp1e

@@ -1,0 +1,425 @@
+---
+title: "Toxo GSEA on bulk RNA-seq data"
+output: html_notebook
+---
+
+Zoë Steier
+
+Run GSEA on DESeq2 results to find gene sets and pathway differences between memory, effector, and intermediate cell types.
+
+Gene sets to include:
+* H1 hallmarks
+* C2 canonical pathways
+* C5 GO biological processes
+* C5 GO molecular functions
+* C7 immunologic signatures
+
+Also include signatures curated from papers.
+
+# Load packages
+```{r Load required packages}
+library(clusterProfiler)
+library(tidyverse)
+library(rlang)
+library(stringr)
+library(purrr)
+library(org.Mm.eg.db)
+library(org.Hs.eg.db)
+
+library(biomaRt)
+library(stringr)
+library(fgsea)
+library(parallel)
+library(openxlsx)
+
+library(BiocParallel)
+register(MulticoreParam(workers = 5))
+
+library(readxl)
+```
+
+# Load data
+
+```{r Load DE results for GSEA}
+WaldStats <- read_csv("../DE/DE_results/DESeq2_Toxo_GRA6_WaldStat.csv")
+WaldStats_onevsall <- read_csv("../DE/DE_results/DESeq2_Toxo_GRA6_onevsall_WaldStat.csv")
+
+WaldStats
+WaldStats_onevsall
+```
+
+# Prepare data for fgsea
+## Get gene names in correct form
+
+```{r Convert mouse gene symbols to human for comparison with ImmSig databases}
+# Map mouse symbols to human symbols
+martMouse <- biomaRt::useDataset("mmusculus_gene_ensembl", mart=useMart("ensembl"))
+orgdb_Species <- org.Mm.eg.db
+
+bmMouse <- getBM(attributes=c("ensembl_gene_id","hsapiens_homolog_associated_gene_name"),mart=martMouse)
+    
+# Note: biomart will not allow me to retrieve all three attribute (gene id, gene symbol, human homolog)
+# in one call of getBM, so I do these separately and merge.
+bmSymbol <- getBM(attributes=c("mgi_symbol","ensembl_gene_id"),mart=martMouse)
+
+tbMouseSymbol_to_MouseENSEMBL <-  bmSymbol %>% distinct() %>% as_tibble() %>% na_if("") %>% na.omit() %>% 
+  dplyr::select(Symbol=mgi_symbol,ENSEMBL=ensembl_gene_id)
+
+tbMouseENSEMBL_to_HumanSymbol<- bmMouse %>% distinct() %>% as_tibble() %>% na_if("") %>% na.omit() %>% 
+  dplyr::select(ENSEMBL=ensembl_gene_id,Human_Symbol=hsapiens_homolog_associated_gene_name)
+
+tbMouseSymbol_to_HumanSymbol <- dplyr::inner_join(tbMouseSymbol_to_MouseENSEMBL , tbMouseENSEMBL_to_HumanSymbol,by="ENSEMBL") %>% 
+  dplyr::select(Symbol,Human_Symbol)
+
+tbMapping <- tbMouseSymbol_to_HumanSymbol
+```
+
+## Collect signatures
+
+```{r Get signature collections for fgsea}
+
+# Gene sets can be downloaded from MSigDB
+gmtHallmark <- fgsea::gmtPathways("/data/yosef2/users/zsteier/references/Signatures/h.all.v7.0.symbols.gmt")
+gmtC2 <- fgsea::gmtPathways("/data/yosef2/users/david.detomaso/Signatures/MSIGDB/c2.cp.v6.1.symbols.gmt")
+gmtC5 <- fgsea::gmtPathways("/data/yosef2/users/david.detomaso/Signatures/MSIGDB/c5.all.v4.0.symbols.gmt")
+gmtC7<- fgsea::gmtPathways("/data/yosef2/users/david.detomaso/Signatures/MSIGDB/C7_IMMSIG_ALL.gmt")
+
+```
+
+## Make custom signatures
+
+```{r Utzschneider 1}
+
+# Data from: Utzschneider, D. T. et al. (2016) ‘T Cell Factor 1-Expressing Memory-like CD8+ T Cells Sustain the Immune Response to Chronic Viral Infections’, Immunity, 45(2), pp. 415–427. doi: 10.1016/j.immuni.2016.07.021.
+
+# There are three gene lists. Turn them into a .gmt file so that they can be used as a signature.
+
+# Load data
+
+# Sig directions (column for Gene_Symbol, Direction == "Up" or "Down")
+chronic_TCF1_plus <- read_excel('/data/yosef2/users/zsteier/Toxo/analysis/GSEA/sig_data/Utzschneider_Gene_Profiles_(1).xlsx', na = "NA", sheet = 1)
+chronic_TCF1_minus <- read_excel('/data/yosef2/users/zsteier/Toxo/analysis/GSEA/sig_data/Utzschneider_Gene_Profiles_(1).xlsx', na = "NA", sheet = 2)
+memory <- read_excel('/data/yosef2/users/zsteier/Toxo/analysis/GSEA/sig_data/Utzschneider_Gene_Profiles_(1).xlsx', na = "NA", sheet = 3)
+
+# Make signature tibble (Name, Description, )
+# Save gmt file (tab delimited)
+
+# GMT files after combining pos and negative genes (directions are in the above files)
+Utzschneider_chronic_TCF1_pos <- fgsea::gmtPathways("/data/yosef2/users/zsteier/Toxo/analysis/GSEA/sig_data/Utzschneider_chronic_TCF1_pos.gmt")
+Utzschneider_chronic_TCF1_neg <- fgsea::gmtPathways("/data/yosef2/users/zsteier/Toxo/analysis/GSEA/sig_data/Utzschneider_chronic_TCF1_neg.gmt")
+Utzschneider_memory <- fgsea::gmtPathways("/data/yosef2/users/zsteier/Toxo/analysis/GSEA/sig_data/Utzschneider_memory.gmt")
+```
+
+```{r Utzschneider2}
+
+# Data from: Utzschneider, D. T. et al. (2016) ‘T Cell Factor 1-Expressing Memory-like CD8+ T Cells Sustain the Immune Response to Chronic Viral Infections’, Immunity, 45(2), pp. 415–427. doi: 10.1016/j.immuni.2016.07.021.
+
+# One gene list that looks like it's from a DE test between TCF1pos_vs_TCF1neg
+TCF1pos_vs_TCF1neg <- read_excel('/data/yosef2/users/zsteier/Toxo/analysis/GSEA/sig_data/Utzschneider_TCF1+_vs_TCF1-_(2).xlsx', na = "NA", sheet = 1)
+
+TCF1pos_vs_TCF1neg %>%
+  filter(adj.P.Val < 0.05) %>%
+  arrange(desc(adj.P.Val)) # All adj.P.Val are less than 0.05, so this is the gene set of interest
+
+min(abs(TCF1pos_vs_TCF1neg %>% dplyr::select(logFC))) # min LFC is 1, reported LFC cutoff is 2, so assume this is the log2foldchange
+max(TCF1pos_vs_TCF1neg %>% dplyr::select(adj.P.Val)) # max adjusted p value is 0.05
+# Conclusion: these results are already filtered for significance. Use the entire list as the signature (2,246 genes)
+
+# Generate the signature direction tibble
+TCF1pos_vs_TCF1neg <- TCF1pos_vs_TCF1neg %>%
+  mutate(Direction = case_when(logFC > 0 ~ "Up",
+                               logFC < 0 ~ "Down"))
+
+# Make signature: Name, Description, Genes (save as tsv)
+tcfposneg_list <- c("Utzschneider_TCF1pos_vs_TCF1neg", "https://doi.org/10.1016/j.immuni.2016.07.021", TCF1pos_vs_TCF1neg %>% dplyr::select(Gene_Symbol) %>% deframe())
+tcfposneg_tibble <- as_tibble_row(tcfposneg_list, .name_repair = "unique")
+write_delim(tcfposneg_tibble, "/data/yosef2/users/zsteier/Toxo/analysis/GSEA/sig_data/Utzschneider_TCF1pos_vs_TCF1neg.gmt",
+            delim = "\t", col_names = FALSE) # write as tab-separated gmt file
+
+# Load signature as gmt file
+Utzschneider_TCF1pos_vs_TCF1neg <- fgsea::gmtPathways("/data/yosef2/users/zsteier/Toxo/analysis/GSEA/sig_data/Utzschneider_TCF1pos_vs_TCF1neg.gmt")
+```
+
+```{r Hudson_early}
+
+# Data from: Hudson, W. H. et al. (2019) ‘Proliferating Transitory T Cells with an Effector-like Transcriptional Signature Emerge from PD-1 + Stem- Article Proliferating Transitory T Cells with an Effector-like Transcriptional Signature Emerge from PD-1 + Stem-like CD8 + T Cells during Chronic In’, Immunity. Elsevier Inc., pp. 1–16. doi: 10.1016/j.immuni.2019.11.002.
+
+# Two gene lists from a DE test
+CD101posTim3pos_vs_CD101negTim3pos <- read_excel('/data/yosef2/users/zsteier/Toxo/analysis/GSEA/sig_data/DE Genes Hudson early.xlsx', na = "NA", sheet = 2)
+CD101negTim3pos_vs_CD101negTim3neg <- read_excel('/data/yosef2/users/zsteier/Toxo/analysis/GSEA/sig_data/DE Genes Hudson early.xlsx', na = "NA", sheet = 3)
+# These lists include all genes (53,000), so filter by the same criteria as above to generate the gene sets
+
+min(abs(CD101posTim3pos_vs_CD101negTim3pos %>% dplyr::select(log2FoldChange)), na.rm = TRUE) # min LFC is 1, reported LFC cutoff is 2, so assume this is the log2foldchange
+max(CD101posTim3pos_vs_CD101negTim3pos %>% dplyr::select(padj), na.rm = TRUE) # max adjusted p value is 0.05
+
+# Make sig direction tibble (Gene_Symbol, Direction)
+Hudson_early_CD101posTim3pos_vs_CD101negTim3pos <- CD101posTim3pos_vs_CD101negTim3pos %>%
+  filter(abs(log2FoldChange) > 1) %>% # filter on LFC
+  filter(padj < 0.05) %>% # filter on padj
+  mutate(Gene_Symbol = external_gene_name) %>%
+  mutate(Direction = case_when(log2FoldChange > 0 ~ "Up",
+                               log2FoldChange < 0 ~ "Down")) # reduced to 485 genes
+
+Hudson_early_CD101negTim3pos_vs_CD101negTim3neg <- CD101negTim3pos_vs_CD101negTim3neg %>%
+  filter(abs(log2FoldChange) > 1) %>% # filter on LFC
+  filter(padj < 0.05) %>% # filter on padj
+  mutate(Gene_Symbol = external_gene_name) %>%
+  mutate(Direction = case_when(log2FoldChange > 0 ~ "Up",
+                               log2FoldChange < 0 ~ "Down")) # reduced to 1,573 genes
+
+# Make signature: Name, Description, Genes (save as gmt)
+Hudson_early1_list <- c("Hudson_early_CD101posTim3pos_vs_CD101negTim3pos", "https://doi.org/10.1016/j.immuni.2019.11.002", Hudson_early_CD101posTim3pos_vs_CD101negTim3pos %>% dplyr::select(Gene_Symbol) %>% deframe())
+Hudson_early1_tibble <- as_tibble_row(Hudson_early1_list, .name_repair = "unique")
+write_delim(Hudson_early1_tibble, "/data/yosef2/users/zsteier/Toxo/analysis/GSEA/sig_data/Hudson_early_CD101posTim3pos_vs_CD101negTim3pos.gmt",
+            delim = "\t", col_names = FALSE) # write as tab-separated gmt file
+
+Hudson_early2_list <- c("Hudson_early_CD101negTim3pos_vs_CD101negTim3neg", "https://doi.org/10.1016/j.immuni.2019.11.002", Hudson_early_CD101negTim3pos_vs_CD101negTim3neg %>% dplyr::select(Gene_Symbol) %>% deframe())
+Hudson_early2_tibble <- as_tibble_row(Hudson_early2_list, .name_repair = "unique")
+write_delim(Hudson_early2_tibble, "/data/yosef2/users/zsteier/Toxo/analysis/GSEA/sig_data/Hudson_early_CD101negTim3pos_vs_CD101negTim3neg.gmt",
+            delim = "\t", col_names = FALSE) # write as tab-separated gmt file
+
+# Load signature as gmt file
+Hudson_early1 <- fgsea::gmtPathways("/data/yosef2/users/zsteier/Toxo/analysis/GSEA/sig_data/Hudson_early_CD101posTim3pos_vs_CD101negTim3pos.gmt")
+Hudson_early2 <- fgsea::gmtPathways("/data/yosef2/users/zsteier/Toxo/analysis/GSEA/sig_data/Hudson_early_CD101negTim3pos_vs_CD101negTim3neg.gmt")
+```
+
+```{r Hudson_late}
+
+# Data from: Hudson, W. H. et al. (2019) ‘Proliferating Transitory T Cells with an Effector-like Transcriptional Signature Emerge from PD-1 + Stem- Article Proliferating Transitory T Cells with an Effector-like Transcriptional Signature Emerge from PD-1 + Stem-like CD8 + T Cells during Chronic In’, Immunity. Elsevier Inc., pp. 1–16. doi: 10.1016/j.immuni.2019.11.002.
+
+# Two gene lists from a DE test
+late_CD101posTim3pos_vs_CD101negTim3pos <- read_excel('/data/yosef2/users/zsteier/Toxo/analysis/GSEA/sig_data/DE genes Hudson late.xlsx', na = "NA", sheet = 2)
+late_CD101negTim3neg_vs_CD101negTim3pos <- read_excel('/data/yosef2/users/zsteier/Toxo/analysis/GSEA/sig_data/DE genes Hudson late.xlsx', na = "NA", sheet = 3)
+# These lists include all genes (53,000), so filter by the same criteria as above to generate the gene sets
+
+# Make sig direction tibble (Gene_Symbol, Direction)
+Hudson_late_CD101posTim3pos_vs_CD101negTim3pos <- late_CD101posTim3pos_vs_CD101negTim3pos %>%
+  filter(abs(log2FoldChange) > 1) %>% # filter on LFC
+  filter(padj < 0.05) %>% # filter on padj
+  mutate(Gene_Symbol = external_gene_name) %>%
+  mutate(Direction = case_when(log2FoldChange > 0 ~ "Up",
+                               log2FoldChange < 0 ~ "Down")) # reduced to 807 genes
+
+Hudson_late_CD101negTim3neg_vs_CD101negTim3pos <- late_CD101negTim3neg_vs_CD101negTim3pos %>%
+  filter(abs(log2FoldChange) > 1) %>% # filter on LFC
+  filter(padj < 0.05) %>% # filter on padj
+  mutate(Gene_Symbol = external_gene_name) %>%
+  mutate(Direction = case_when(log2FoldChange > 0 ~ "Up",
+                               log2FoldChange < 0 ~ "Down")) # reduced to 2,493 genes
+
+# Make signature: Name, Description, Genes (save as gmt)
+Hudson_late1_list <- c("Hudson_late_CD101posTim3pos_vs_CD101negTim3pos", "https://doi.org/10.1016/j.immuni.2019.11.002", Hudson_late_CD101posTim3pos_vs_CD101negTim3pos %>% dplyr::select(Gene_Symbol) %>% deframe())
+Hudson_late1_tibble <- as_tibble_row(Hudson_late1_list, .name_repair = "unique")
+write_delim(Hudson_late1_tibble, "/data/yosef2/users/zsteier/Toxo/analysis/GSEA/sig_data/Hudson_late_CD101posTim3pos_vs_CD101negTim3pos.gmt",
+            delim = "\t", col_names = FALSE) # write as tab-separated gmt file
+
+Hudson_late2_list <- c("Hudson_late_CD101negTim3neg_vs_CD101negTim3pos", "https://doi.org/10.1016/j.immuni.2019.11.002", Hudson_late_CD101negTim3neg_vs_CD101negTim3pos %>% dplyr::select(Gene_Symbol) %>% deframe())
+Hudson_late2_tibble <- as_tibble_row(Hudson_late2_list, .name_repair = "unique")
+write_delim(Hudson_late2_tibble, "/data/yosef2/users/zsteier/Toxo/analysis/GSEA/sig_data/Hudson_late_CD101negTim3neg_vs_CD101negTim3pos.gmt",
+            delim = "\t", col_names = FALSE) # write as tab-separated gmt file
+
+# Load signature as gmt file
+Hudson_late1 <- fgsea::gmtPathways("/data/yosef2/users/zsteier/Toxo/analysis/GSEA/sig_data/Hudson_late_CD101posTim3pos_vs_CD101negTim3pos.gmt")
+Hudson_late2 <- fgsea::gmtPathways("/data/yosef2/users/zsteier/Toxo/analysis/GSEA/sig_data/Hudson_late_CD101negTim3neg_vs_CD101negTim3pos.gmt")
+```
+
+# Run fgsea
+## GSEA on MSigDB gene sets
+
+```{r Run multiple fgsea tests}
+
+#WaldStats_filt <- WaldStats # for pairwise comparisons
+WaldStats_filt <- WaldStats_onevsall # for one vs all comparisons
+
+gene_sets <- list("C2" = gmtC2, "C5" = gmtC5, "C7" = gmtC7, "Hallmark" = gmtHallmark)
+
+for (gene_set_num in seq(length(gene_sets))) {
+  gene_set_name <- names(gene_sets)[gene_set_num]
+
+  liResults <- list()
+  
+  for (i in seq(length(colnames(WaldStats_filt)) - 1)) {
+    comparison_name <- str_replace(colnames(WaldStats_filt)[i + 1], "_stat", "")
+
+    test_stat <- WaldStats_filt[, c(1, 1 + i)]
+    colnames(test_stat)[2] <- "stat"
+    
+    test_stat <- test_stat %>%
+      group_by(Gene) %>%
+      summarize(mean_stat = mean(stat)) %>%
+      na.omit() %>%
+      left_join(tbMapping, by = c("Gene" = "Symbol")) %>% # convert to human names
+      dplyr::select(Human_Symbol, mean_stat) %>% # keep just human gene name
+      na.omit() %>% # remove rows with no human gene name
+      group_by(Human_Symbol) %>%
+      summarize(mean_stat_hu = mean(mean_stat)) %>% # take mean of human gene names
+      arrange(desc(mean_stat_hu)) %>% # sort from highest to lowest Wald Stat
+      deframe()
+    
+    res_fgsea <- fgsea(pathways=gene_sets[[gene_set_num]],stats=test_stat,nperm=1000,nproc=5)
+    tbGSEA <- res_fgsea %>% 
+      as_tibble() %>% 
+      arrange(desc(NES)) %>% # NES – enrichment score normalized to mean enrichment of random samples of the same size
+      dplyr::select(pathway, padj, NES)
+    colnames(tbGSEA)[2:3] <- paste(comparison_name,colnames(tbGSEA)[2:3],sep="_") # don't add to pathway column
+    
+    liResults[[i]] <- (tbGSEA)
+  }
+  
+  # Merge results
+  MergeGSEA <- function(tbLeft,tbRight){
+    left_join(tbLeft,tbRight,by=c("pathway"))
+  }
+  
+  tbGSEAMerged <- Reduce(MergeGSEA,liResults)
+  tbGSEAMerged <- tbGSEAMerged %>%
+    dplyr::select(pathway, everything()) # Results for one gene set for all tests
+  
+  
+  #write_csv(tbGSEAMerged, str_c("GSEA_results/GRA6_", gene_set_name, "_results.csv")) # for pairwise comparisons
+  write_csv(tbGSEAMerged, str_c("GSEA_results/GRA6_onevsall_", gene_set_name, "_results.csv")) # for one vs all comparisons
+
+  # Save one output csv per gene set
+  
+}
+```
+
+## GSEA on custom signatures
+
+```{r GSEA with mouse gene names}
+
+#WaldStats_filt <- WaldStats # for pairwise comparisons
+WaldStats_filt <- WaldStats_onevsall # for one vs all comparisons
+
+gene_sets = list("Utzschneider_chronic_TCF1_pos" = Utzschneider_chronic_TCF1_pos,
+                 "Utzschneider_chronic_TCF1_neg" = Utzschneider_chronic_TCF1_neg,
+                 "Utzschneider_memory" = Utzschneider_memory,
+                 "Utzschneider_TCF1pos_vs_TCF1neg" = Utzschneider_TCF1pos_vs_TCF1neg,
+                 "Hudson_early_CD101posTim3pos_vs_CD101negTim3pos" = Hudson_early1,
+                 "Hudson_early_CD101negTim3pos_vs_CD101negTim3neg" = Hudson_early2,
+                 "Hudson_late_CD101posTim3pos_vs_CD101negTim3pos" = Hudson_late1,
+                 "Hudson_late_CD101posTim3pos_vs_CD101negTim3pos" = Hudson_late2)
+
+sig_directions = list(chronic_TCF1_plus, chronic_TCF1_minus, memory, # three sigs from Utzschneider1
+                      TCF1pos_vs_TCF1neg, # one sig from Utzschneider2
+                      Hudson_early_CD101posTim3pos_vs_CD101negTim3pos, Hudson_early_CD101negTim3pos_vs_CD101negTim3neg, # two from Hudson early
+                      Hudson_late_CD101posTim3pos_vs_CD101negTim3pos, Hudson_late_CD101negTim3neg_vs_CD101negTim3pos # two from Hudson late
+                    )
+
+collected_customsig_results = list()
+
+for (gene_set_num in seq(length(gene_sets))) {
+  gene_set_name <- names(gene_sets)[gene_set_num]
+
+  liResults <- list()
+  
+  for (i in seq(length(colnames(WaldStats_filt)) - 1)) {
+    comparison_name <- str_replace(colnames(WaldStats_filt)[i + 1], "_stat", "")
+
+    test_stat <- WaldStats_filt[, c(1, 1 + i)]
+    colnames(test_stat)[2] <- "stat"
+    
+    # Flip the sign of genes that are negative in the signature
+    down_genes <- sig_directions[[gene_set_num]] %>%
+      filter(Direction == "Down") %>%
+      dplyr::select(Gene_Symbol) %>%
+      deframe()
+
+    test_stat <- test_stat %>%
+      mutate(stat = case_when(Gene %in% down_genes ~ stat*(-1),
+                              !(Gene %in% down_genes) ~ stat))
+
+    test_stat <- test_stat %>%
+      group_by(Gene) %>%
+      summarize(mean_stat = mean(stat)) %>%
+      na.omit() %>%
+      dplyr::select(Gene, mean_stat) %>% 
+      arrange(desc(mean_stat)) %>% # sort from highest to lowest Wald Stat
+      deframe()
+    
+    res_fgsea <- fgsea(pathways=gene_sets[[gene_set_num]],stats=test_stat,nperm=1000,nproc=5)
+    tbGSEA <- res_fgsea %>% 
+      as_tibble() %>% 
+      arrange(desc(NES)) %>% # NES – enrichment score normalized to mean enrichment of random samples of the same size
+      dplyr::select(pathway, padj, NES)
+    colnames(tbGSEA)[2:3] <- paste(comparison_name,colnames(tbGSEA)[2:3],sep="_") # don't add to pathway column
+    
+    liResults[[i]] <- (tbGSEA)
+  }
+  
+  # Merge results
+  MergeGSEA <- function(tbLeft,tbRight){
+    left_join(tbLeft,tbRight,by=c("pathway"))
+  }
+  
+  tbGSEAMerged <- Reduce(MergeGSEA,liResults)
+  tbGSEAMerged <- tbGSEAMerged %>%
+    dplyr::select(pathway, everything()) # Results for one gene set for all tests
+  
+  # Collect custom results
+  collected_customsig_results[[gene_set_num]] = tbGSEAMerged
+  
+}
+
+all_customsig_results <- Reduce(rbind,collected_customsig_results)
+all_customsig_results
+
+#write_csv(all_customsig_results, "GSEA_results/GRA6_Utzschneider_Hudson_results.csv") # for pairwise comparisons
+write_csv(all_customsig_results, "GSEA_results/GRA6_onevsall_Utzschneider_Hudson_results.csv") # for one vs all comparisons
+
+```
+## Find leading edge genes for selected tests
+
+```{r Find leading edge genes for Hallmark signatures}
+
+# which DE tests to use
+WaldStats_selected <- WaldStats_onevsall
+
+gene_sets <- list("Hallmark" = gmtHallmark)
+
+for (gene_set_num in seq(length(gene_sets))) {
+  gene_set_name <- names(gene_sets)[gene_set_num]
+
+  for (i in seq(length(colnames(WaldStats_selected)) - 1)) {
+    comparison_name <- str_replace(colnames(WaldStats_selected)[i + 1], "_stat", "")
+
+    test_stat <- WaldStats_selected[, c(1, 1 + i)]
+
+    # Convert to human gene names from mouse
+    colnames(test_stat)[2] <- "stat"
+    
+    test_stat <- test_stat %>%
+      group_by(Gene) %>%
+      summarize(mean_stat = mean(stat)) %>%
+      na.omit() %>%
+      left_join(tbMapping, by = c("Gene" = "Symbol")) %>% # convert to human names
+      dplyr::select(Human_Symbol, mean_stat) %>% # keep just human gene name
+      na.omit() %>% # remove rows with no human gene name
+      group_by(Human_Symbol) %>%
+      summarize(mean_stat_hu = mean(mean_stat)) %>% # take mean of human gene names in case of duplicates
+      arrange(desc(mean_stat_hu)) %>% # sort from highest to lowest Wald Stat
+      deframe()
+
+    # Run gsea test
+    res_fgsea <- fgsea(pathways=gmtHallmark,stats=test_stat,nperm=1000,nproc=5)
+
+    # Extract leading edge genes for each gene set
+    leadedge <- res_fgsea %>% as_tibble() %>%
+      dplyr::select(leadingEdge)
+    
+    leading_genes <- (res_fgsea)
+    
+    # Convert list into string
+    leading_genes$leadingEdgestr = ""
+    for (i in seq(dim(leading_genes)[1])) {
+      #print(i)
+      leading_genes[i, "leadingEdgestr"] <- (str_c(unlist(leading_genes[i, "leadingEdge"]), collapse = ", "))
+    }
+        
+    leading_str <- leading_genes %>%
+      dplyr::select(-c("leadingEdge"))
+    
+    write_csv(leading_str, str_c("GSEA_results/", comparison_name, "_Hallmark_leadingEdgeGenes.csv"))
+
+  }
+}

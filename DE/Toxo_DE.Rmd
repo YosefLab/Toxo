@@ -1,0 +1,228 @@
+---
+title: "Toxo DE analysis of bulk RNA-seq"
+output: html_notebook
+---
+
+Zoë Steier
+
+Analyze bulk RNA-seq data from mice infected with Toxoplasma gondii. T cells were isolated and sorted for three cell types: A (memory), B (intermediate), and C (effector). There are 10 samples from GRA6 mice (polyclonal TCR).
+
+# Load required packages
+
+```{r Load required packages}
+library(tidyverse)
+library(DESeq2)
+library(tximport)
+```
+
+# Load data
+
+```{r Load RSEM RNA-seq data}
+# Load RSEM Count Data
+### Note: future users should obtain this data from GEO: https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSE187545
+
+txi.rsem <- readRDS("/data/yosef2/users/zsteier/Toxo/analysis/GEO_data/txi_rsem_transcript_counts.rds")
+#head(txi.rsem)
+```
+
+```{r Make sample metadata}
+samples <- colnames(txi.rsem$counts)
+GRA6_meta <- tibble(sample = samples) %>%
+    mutate(mouse = str_sub(sample, 1,6), cell_type = str_sub(sample,7, 7))
+
+GRA6_meta[["cell_type"]] <- str_replace(GRA6_meta[["cell_type"]], "A", "memory")
+GRA6_meta[["cell_type"]] <- str_replace(GRA6_meta[["cell_type"]], "B", "intermediate")
+GRA6_meta[["cell_type"]] <- str_replace(GRA6_meta[["cell_type"]], "C", "effector")
+
+meta_df <- data.frame(GRA6_meta) # make dataframe of metadata
+row.names(meta_df) <- GRA6_meta$sample
+```
+# Run DESeq2
+
+## All pairwise comparisons with DESeq2
+
+```{r Set up DESeq object for pairwise comparisons}
+# Run all comparisons between cell types in GRA6 polyclonal mice
+
+# Create DESeq dataset
+dedsRNASeq <- DESeqDataSetFromTximport(txi.rsem, # un-normalized read counts from RSEM output
+                                 colData = meta_df,
+                                 design = ~ cell_type
+                                 )
+
+# Filter genes based on minimum reads
+keep <- rowSums(counts(dedsRNASeq)) >= 10 # Keep genes that have at least 10 reads total
+dedsRNASeq_filt <- dedsRNASeq[keep, ]
+```
+
+```{r Run DESeq2 for pairwise comparisons}
+# Run DESeq2 
+deRNA <- DESeq(dedsRNASeq_filt) # deRNA contains DE results
+
+# Extract pairwise results by specifying contrasts
+DESeq2_SimpleContrast <- function(Group1, Group2){
+  var = "cell_type"
+  comparison <- str_c(var, "_", Group1, "_vs_", Group2) # name of test to include in results
+  print(str_c("Running Test: ", comparison))
+  
+  res_deRNA <- results(deRNA, contrast=c(var, Group1, Group2), alpha=0.05)
+  
+  # Make results into tibble
+  tbDE <- as_tibble(res_deRNA)
+  tbDE$Gene <- rownames(res_deRNA)
+
+  # Collect DESeq2 results
+  tbDE <- tbDE %>% dplyr::select(log2FoldChange,pvalue,padj,Gene) #DEGenes
+  colnames(tbDE)[1:3] <- paste(str_c(Group1, "_vs_", Group2), colnames(tbDE)[1:3], sep="_") # don't add to Gene column
+
+  return(tbDE)
+}
+
+# Comparisons to make
+tests <- tibble("Group1" = c("memory", "memory", "intermediate"), 
+                "Group2" = c("intermediate", "effector", "effector"))
+
+# Extract contrasts (pairwise DE results)
+liResults <- tests %>% 
+  pmap(DESeq2_SimpleContrast)
+
+# Merge results from all tests
+MergeDE <- function(tbLeft,tbRight){
+  left_join(tbLeft,tbRight,by=c("Gene"))
+}
+
+tbDEMerged <- Reduce(MergeDE,liResults)
+tbDEMerged <- tbDEMerged %>%
+  dplyr::select(Gene, everything())
+
+write_csv(tbDEMerged, "DE_results/DESeq2_Toxo_GRA6.csv")
+
+## View results
+# tbDEMerged %>%
+#   arrange(intermediate_vs_effector_padj) %>%
+#   filter(intermediate_vs_effector_log2FoldChange < 0)
+```
+
+```{r Run DESeq2 for pairwise comparisons and collect stats for GSEA}
+# Run DESeq2 and collect Wald stat for GSEA
+
+deRNA <- DESeq(dedsRNASeq_filt) # deRNA contains DE results
+
+# Extract pairwise results by specifying contrasts
+DESeq2_SimpleContrast <- function(Group1, Group2){
+  # deRNA is DEseq2 results
+  # test tibble contains stage of cells, group1 to test, group2 to test
+  var = "cell_type"
+  res_deRNA <- results(deRNA, contrast=c(var, Group1, Group2), alpha=0.05)
+  
+  # Make results into tibble
+  tbDE <- as_tibble(res_deRNA)
+  tbDE$Gene <- rownames(res_deRNA)
+  
+  # Collect Wald stat for GSEA
+  tbDE_stat <- tbDE %>% dplyr::select(Gene, stat) #DEGenes
+  colnames(tbDE_stat)[2] <- paste(str_c(Group1, "_vs_", Group2),colnames(tbDE_stat)[2],sep="_") # don't add to Gene column
+  return(tbDE_stat)
+}
+
+tests <- tibble("Group1" = c("memory", "memory", "intermediate"), 
+                "Group2" = c("intermediate", "effector", "effector"))
+
+# Extract contrasts (pairwise DE results)
+liResults <- tests %>% 
+  pmap(DESeq2_SimpleContrast)
+
+# Merge results from all tests
+MergeDE <- function(tbLeft,tbRight){
+  left_join(tbLeft,tbRight,by=c("Gene"))
+}
+
+tbDEMerged <- Reduce(MergeDE,liResults)
+tbDEMerged <- tbDEMerged %>%
+  dplyr::select(Gene, everything())
+tbDEMerged # just return the Wald stat with gene name
+
+write_csv(tbDEMerged, "DE_results/DESeq2_Toxo_GRA6_WaldStat.csv")
+```
+
+## One vs all test with DESeq2
+
+```{r Set up DESeq object for one vs all test}
+# Run one vs all test for each cell type in GRA6 polyclonal mice
+
+# Create DESeq dataset
+dedsRNASeq_onevsall <- DESeqDataSetFromTximport(txi.rsem, # un-normalized read counts from RSEM output
+                                 colData = meta_df,
+                                 design = ~ 0 + cell_type # see Michael Love's answer to one vs all test: https://support.bioconductor.org/p/118090/, no intercept in formula
+                                 )
+
+# Filter genes based on minimum reads
+keep <- rowSums(counts(dedsRNASeq_onevsall)) >= 10 # Keep genes that have at least 10 reads total
+dedsRNASeq_onevsall_filt <- dedsRNASeq_onevsall[keep, ]
+```
+
+```{r Run DESeq2 for one vs all test}
+# Run DESeq2 
+deRNA <- DESeq(dedsRNASeq_onevsall_filt) # deRNA contains DE results
+
+# check on design of test
+resultsNames(deRNA) # three cell types, no intercepts (correct)
+# "cell_typeeffector"     "cell_typeintermediate" "cell_typememory"
+
+# Now make one contrast for each group vs all else based on this example: https://support.bioconductor.org/p/118090/, also see https://support.bioconductor.org/p/86347/
+onevsall_effector <- as_tibble(results(deRNA, contrast=c(1, -1/2, -1/2), alpha=0.05)) %>% # average the other two cell types
+  mutate(Gene = rownames(dedsRNASeq_onevsall_filt))
+onevsall_intermediate <- as_tibble(results(deRNA, contrast=c(-1/2, 1, -1/2), alpha=0.05)) %>% # average the other two cell types
+    mutate(Gene = rownames(dedsRNASeq_onevsall_filt))
+onevsall_memory <- as_tibble(results(deRNA, contrast=c(-1/2, -1/2, 1), alpha=0.05)) %>% # average the other two cell types
+    mutate(Gene = rownames(dedsRNASeq_onevsall_filt))
+
+# Collect DESeq2 results
+tbDE_effector <- onevsall_effector %>% dplyr::select(log2FoldChange,pvalue,padj,Gene) #DEGenes
+tbDE_intermediate <- onevsall_intermediate %>% dplyr::select(log2FoldChange,pvalue,padj,Gene) #DEGenes
+tbDE_memory <- onevsall_memory %>% dplyr::select(log2FoldChange,pvalue,padj,Gene) #DEGenes
+
+colnames(tbDE_effector)[1:3] <- paste(str_c("effector", "_vs_", "all"),colnames(tbDE_effector)[1:3],sep="_") # don't add to Gene column
+colnames(tbDE_intermediate)[1:3] <- paste(str_c("intermediate", "_vs_", "all"),colnames(tbDE_intermediate)[1:3],sep="_") # don't add to Gene column
+colnames(tbDE_memory)[1:3] <- paste(str_c("memory", "_vs_", "all"),colnames(tbDE_memory)[1:3],sep="_") # don't add to Gene column
+
+# Extract contrasts (pairwise DE results)
+liResults <- list(tbDE_effector, tbDE_intermediate, tbDE_memory)
+
+# Merge results from all tests
+MergeDE <- function(tbLeft,tbRight){
+  left_join(tbLeft,tbRight,by=c("Gene"))
+}
+
+tbDEMerged <- Reduce(MergeDE,liResults)
+tbDEMerged <- tbDEMerged %>%
+  dplyr::select(Gene, everything())
+
+write_csv(tbDEMerged, "DE_results/DESeq2_Toxo_GRA6_onevsall.csv")
+```
+
+```{r Run DESeq2 for one vs all test and collect stats for GSEA}
+tbDE_effector <- onevsall_effector %>% dplyr::select(Gene, stat) #DEGenes
+tbDE_intermediate <- onevsall_intermediate %>% dplyr::select(Gene, stat) #DEGenes
+tbDE_memory <- onevsall_memory %>% dplyr::select(Gene, stat) #DEGenes
+
+colnames(tbDE_effector)[2] <- paste(str_c("effector", "_vs_", "all"),colnames(tbDE_effector)[2],sep="_") # don't add to Gene column
+colnames(tbDE_intermediate)[2] <- paste(str_c("intermediate", "_vs_", "all"),colnames(tbDE_intermediate)[2],sep="_") # don't add to Gene column
+colnames(tbDE_memory)[2] <- paste(str_c("memory", "_vs_", "all"),colnames(tbDE_memory)[2],sep="_") # don't add to Gene column
+
+# Extract contrasts (pairwise DE results)
+liResults <- list(tbDE_effector, tbDE_intermediate, tbDE_memory)
+
+# Merge results
+MergeDE <- function(tbLeft,tbRight){
+  left_join(tbLeft,tbRight,by=c("Gene"))
+}
+
+tbDEMerged <- Reduce(MergeDE,liResults)
+tbDEMerged <- tbDEMerged %>%
+  dplyr::select(Gene, everything())
+
+write_csv(tbDEMerged, "DE_results/DESeq2_Toxo_GRA6_onevsall_WaldStat.csv")
+```
+
+

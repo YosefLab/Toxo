@@ -1,0 +1,850 @@
+---
+title: "Generate Figures for Toxo RNA-seq Data"
+output: html_notebook
+---
+
+Zoë Steier
+
+Generate figures for bulk RNA-seq data from mice infected with Toxoplasma gondii. T cells were isolated and sorted for three cell types: A (memory), B (intermediate), and C (effector). There are 10 samples from GRA6 mice (polyclonal TCR).
+
+# Load packages
+
+```{r Load required packages}
+
+library(tidyverse)
+library(DESeq2)
+library(tximport)
+library(readxl)
+library(pheatmap)
+library(RColorBrewer)
+
+# library(devtools)
+# devtools::install_github("saeyslab/triwise")
+# install.packages("dplyr") # to get if_any
+library(triwise)
+```
+
+# Load data
+
+```{r Load RSEM RNA-seq data}
+
+# Load RSEM Count Data
+### Note: future users should obtain this data from GEO: https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSE187545
+
+txi.rsem <- readRDS("/data/yosef2/users/zsteier/Toxo/analysis/GEO_data/txi_rsem_transcript_counts.rds")
+```
+
+```{r Make sample metadata}
+
+samples <- colnames(txi.rsem$counts)
+GRA6_meta <- tibble(sample = samples) %>%
+    mutate(mouse = str_sub(sample, 1,6), cell_type = str_sub(sample,7, 7))
+
+GRA6_meta[["cell_type"]] <- str_replace(GRA6_meta[["cell_type"]], "A", "memory")
+GRA6_meta[["cell_type"]] <- str_replace(GRA6_meta[["cell_type"]], "B", "intermediate")
+GRA6_meta[["cell_type"]] <- str_replace(GRA6_meta[["cell_type"]], "C", "effector")
+
+meta_df <- data.frame(GRA6_meta) # make dataframe of metadata
+row.names(meta_df) <- GRA6_meta$sample
+```
+
+```{r Load DE results}
+
+# GRA6 DE results from all pairwise comparisons
+GRA6_DE <- read_csv("../DE/DE_results/DESeq2_Toxo_GRA6.csv")
+GRA6_DE
+```
+
+```{r Set up DESeq2 dataset}
+
+dedsRNASeq_GRA6 <- DESeqDataSetFromTximport(txi.rsem,
+                                 colData = meta_df,
+                                 design = ~ cell_type
+                                 )
+
+# Filter based on minimum reads
+keep <- rowSums(counts(dedsRNASeq_GRA6)) >= 10 # Keep genes that have at least 10 reads total
+dedsRNASeq_GRA6_filt <- dedsRNASeq_GRA6[keep, ]
+```
+
+# Plot figures
+## PCA
+
+```{r PCA plotting function}
+
+PlotPCA_celltype <- function(dds, title){
+  
+  vsd <- vst(dds, blind=FALSE) #dds = dedsRNASeq
+  pcaData <- plotPCA(vsd, intgroup=c("cell_type", "mouse"), returnData=TRUE)
+  percentVar <- round(100 * attr(pcaData, "percentVar"))
+  print(paste0("PC1: ",percentVar[1],"% variance"))
+  print(paste0("PC2: ",percentVar[2],"% variance"))
+  
+  ggplot(pcaData, aes(PC1, PC2, shape = cell_type, color = cell_type)) +
+    geom_point(size=3) +
+    scale_color_manual(values = c(effector = "red", intermediate = "blue", memory = "black")) + # set colors
+    scale_shape_manual(values = c(effector = 17, intermediate = 15, memory = 16)) + # triangle, square, circle
+    xlab("PC1") +
+    ylab("PC2") +
+    coord_fixed() +
+    labs(title = title, color = "Cell type", shape = "Cell type", xlabel = "PC1", ylabel = "PC2") +
+    theme_classic()
+}
+```
+
+```{r Plot PCA}
+
+# Plot PCA
+PlotPCA_celltype(dedsRNASeq_GRA6_filt, "GRA6")
+ggsave("figures/PCA_GRA6.png", width = 5, height = 5)
+```
+
+## Heatmap of all DE genes
+
+```{r Find DE genes}
+
+# DE if padj < 0.05 and lfc > 1
+de_mem_int <- GRA6_DE %>%
+  filter((memory_vs_intermediate_padj < .05) & (abs(memory_vs_intermediate_log2FoldChange) > 1)) %>%
+  dplyr::select(Gene) %>%
+  pull()
+
+de_mem_eff <- GRA6_DE %>%
+  filter((memory_vs_effector_padj < .05) & (abs(memory_vs_effector_log2FoldChange) > 1)) %>%
+  dplyr::select(Gene) %>%
+  pull()
+         
+de_int_eff <- GRA6_DE %>%
+  filter((intermediate_vs_effector_padj < .05) & (abs(intermediate_vs_effector_log2FoldChange) > 1)) %>%
+  dplyr::select(Gene) %>%
+  pull()
+
+all_de_gra6 <- unique(c(de_mem_int, de_mem_eff, de_int_eff))
+
+length(all_de_gra6)
+length(de_mem_int)
+length(de_mem_eff)
+length(de_int_eff)
+```
+
+```{r Make three annotation columns for DE}
+
+# Find up/down DE genes in each test
+de_annotation_tibble <- GRA6_DE %>%
+  filter(Gene %in% all_de_gra6) %>%
+  mutate(DE_memory_vs_intermediate = case_when( # add annotation 1
+    (memory_vs_intermediate_padj < .05) & (memory_vs_intermediate_log2FoldChange > 1) ~ "DE_memory",
+    (memory_vs_intermediate_padj < .05) & (memory_vs_intermediate_log2FoldChange < -1) ~ "DE_intermediate",
+    TRUE ~ "Not_DE")) %>%
+  mutate(DE_memory_vs_effector = case_when( # add annotation 2
+    (memory_vs_effector_padj < .05) & (memory_vs_effector_log2FoldChange > 1) ~ "DE_memory",
+    (memory_vs_effector_padj < .05) & (memory_vs_effector_log2FoldChange < -1) ~ "DE_effector",
+    TRUE ~ "Not_DE")) %>%
+  mutate(DE_intermediate_vs_effector = case_when( # add annotation 3
+    (intermediate_vs_effector_padj < .05) & (intermediate_vs_effector_log2FoldChange > 1) ~ "DE_intermediate",
+    (intermediate_vs_effector_padj < .05) & (intermediate_vs_effector_log2FoldChange < -1) ~ "DE_effector",
+    TRUE ~ "Not_DE")) %>%
+  select(Gene,  DE_memory_vs_intermediate, DE_intermediate_vs_effector, DE_memory_vs_effector)
+
+row_annotations_df <- data.frame(de_annotation_tibble[2:4])
+row.names(row_annotations_df) <- de_annotation_tibble$Gene
+```
+
+```{r Summarize GRA6 DE genes to plot}
+
+vsd_GRA6 <- vst(dedsRNASeq_GRA6_filt, blind=FALSE) # Take vst normalization
+
+# Combine all data into one tibble for plotting
+heatdata_t <- as_tibble(rownames_to_column(as.data.frame(t(assay(vsd_GRA6))), var = "Sample_name")) # samples x genes
+
+# Select genes of interest here to make the size of the dataframe much smaller
+heatdata_t <- heatdata_t %>%
+  select(Sample_name, all_of(all_de_gra6))
+
+heatdata_tnew <- heatdata_t %>%
+  left_join(GRA6_meta %>% select(sample, cell_type), by = c("Sample_name" = "sample")) %>%
+  dplyr::select(-c(Sample_name)) %>%
+  select(Cell_type = cell_type, everything())
+
+# Extract annotations, now in the correct order
+col_annotations <- data.frame(heatdata_tnew %>% dplyr::select(Cell_type))
+# Give annotations row names that match column names of heatdata
+row.names(col_annotations) <- heatdata_t$Sample_name
+annotation_colors <- list("Cell_type" = c(memory = "black", intermediate = "blue", effector = "red"),
+                          "DE_memory_vs_effector" = c(Not_DE = "gray", DE_memory = "black", DE_effector = "red"),
+                          "DE_intermediate_vs_effector" = c(Not_DE = "gray", DE_intermediate = "blue", DE_effector = "red"),
+                          "DE_memory_vs_intermediate" = c(Not_DE = "gray", DE_memory = "black", DE_intermediate = "blue")
+                          )
+
+# Transpose gene expression and rename samples
+heatdata <- t(heatdata_tnew %>% select(-c(Cell_type)))
+colnames(heatdata) <- heatdata_t$Sample_name
+```
+
+```{r Plot heatmap of DE genes}
+
+de_heatmap <- pheatmap(heatdata,
+         cluster_rows = TRUE,
+         show_rownames = FALSE,
+         show_colnames = FALSE,
+         cluster_cols = TRUE,
+         annotation_col = col_annotations,
+         angle_col = 90,
+         annotation_colors = annotation_colors,
+         annotation_row = row_annotations_df,
+         annotation_names_col = FALSE,
+         annotation_names_row = FALSE,
+         color = colorRampPalette(rev(brewer.pal(10, "RdBu")))(100), 
+         scale = "row", # scale colors per row
+         cellheight = .08, 
+         cellwidth = 15, 
+         treeheight_col = 10,
+         treeheight_row = 50 
+  )
+```
+
+
+```{r Arrange columns}
+
+# Change the order to memory > intermediate > effector by reversing the order above
+de_order_cols <- rev(colnames(heatdata[,de_heatmap$tree_col[["order"]]]))
+col_annotations_arranged_de <- data.frame(Cell_type = factor(col_annotations[de_order_cols,], levels = c("memory", "intermediate", "effector")))
+row.names(col_annotations_arranged_de) <- de_order_cols
+```
+
+```{r Arrange rows by annotation}
+row_arrange_heatdata <- as_tibble(heatdata, rownames = "Gene") %>%
+  left_join(de_annotation_tibble, by = "Gene") %>%
+  arrange(DE_memory_vs_effector, DE_intermediate_vs_effector, DE_memory_vs_intermediate) %>%
+  select(Gene) %>%
+  pull()
+
+# Save
+pheatmap(heatdata[row_arrange_heatdata, de_order_cols],
+         cluster_rows = FALSE,
+         show_rownames = FALSE,
+         show_colnames = FALSE,
+         cluster_cols = FALSE,
+         annotation_col = col_annotations_arranged_de,
+         angle_col = 90,
+         annotation_colors = annotation_colors,
+         annotation_row = row_annotations_df,
+         annotation_names_col = TRUE,
+         annotation_names_row = TRUE,
+         color = colorRampPalette(rev(brewer.pal(10, "RdBu")))(100),
+         scale = "row", # scale colors per row
+         cellheight = .1, 
+         cellwidth = 15, 
+         filename = str_c("figures/heatmap_GRA6_DEgenes.png")
+  )
+
+# View
+pheatmap(heatdata[row_arrange_heatdata, de_order_cols],
+         cluster_rows = FALSE,
+         show_rownames = FALSE,
+         show_colnames = FALSE,
+         cluster_cols = FALSE,
+         annotation_col = col_annotations_arranged_de,
+         angle_col = 90,
+         annotation_colors = annotation_colors,
+         annotation_row = row_annotations_df,
+         annotation_names_col = TRUE,
+         annotation_names_row = TRUE,
+         color = colorRampPalette(rev(brewer.pal(10, "RdBu")))(100),
+         scale = "row",
+         cellheight = .05, 
+         cellwidth = 15 
+  )
+```
+
+
+## Heatmap of selected genes
+
+```{r Load gene list}
+
+selected_genes <- read_csv("selected_genes.csv") %>%
+  mutate(Gene = str_to_title(Gene))
+```
+
+```{r Select genes}
+
+# Select genes to plot
+selected_genes_Main1e <- selected_genes %>%
+  filter(Figure == "Main1e")
+
+selected_genes_Main1g <- selected_genes %>%
+  filter(Figure == "Main1g")
+
+selected_genes_Supp1e <- selected_genes %>%
+  filter(Figure == "Supp1e")
+```
+
+```{r Select expression data to plot}
+
+# Get expression data
+heatdata_t <- as_tibble(rownames_to_column(as.data.frame(t(assay(vsd_GRA6))), var = "Sample_name")) # samples x genes
+
+# Select genes of interest here to make the size of the dataframe much smaller
+heatdata_t_Main1e <- heatdata_t %>%
+  dplyr::select(Sample_name, all_of(selected_genes_Main1e$Gene[selected_genes_Main1e$Gene %in% colnames(heatdata_t)])) %>%
+  left_join(GRA6_meta %>% dplyr::select(sample, cell_type), by = c("Sample_name" = "sample")) %>%
+  dplyr::select(-c(Sample_name)) %>%
+  dplyr::select(Cell_type = cell_type, everything())
+
+heatdata_t_Main1g <- heatdata_t %>%
+  dplyr::select(Sample_name, all_of(selected_genes_Main1g$Gene[selected_genes_Main1g$Gene %in% colnames(heatdata_t)])) %>%
+  left_join(GRA6_meta %>% dplyr::select(sample, cell_type), by = c("Sample_name" = "sample")) %>%
+  dplyr::select(-c(Sample_name)) %>%
+  dplyr::select(Cell_type = cell_type, everything())
+
+heatdata_t_Supp1e <- heatdata_t %>%
+  dplyr::select(Sample_name, all_of(selected_genes_Supp1e$Gene[selected_genes_Supp1e$Gene %in% colnames(heatdata_t)])) %>%
+  left_join(GRA6_meta %>% dplyr::select(sample, cell_type), by = c("Sample_name" = "sample")) %>%
+  dplyr::select(-c(Sample_name)) %>%
+  dplyr::select(Cell_type = cell_type, everything())
+
+# Make column annotations
+col_annotations <- as_tibble(rownames_to_column(as.data.frame(t(assay(vsd_GRA6))), var = "Sample_name")) %>%
+  left_join(GRA6_meta %>% dplyr::select(sample, cell_type), by = c("Sample_name" = "sample")) %>%
+  dplyr::select(cell_type) %>%
+  pull()
+col_annotations <- data.frame(col_annotations)
+colnames(col_annotations) <- c("Cell_type")
+row.names(col_annotations) <- heatdata_t$Sample_name # Give annotations row names that match column names of heatdata
+
+# Transpose gene expression and rename samples
+heatdata_Main1e <- t(heatdata_t_Main1e %>% dplyr::select(-c(Cell_type)))
+colnames(heatdata_Main1e) <- heatdata_t$Sample_name
+
+heatdata_Main1g <- t(heatdata_t_Main1g %>% dplyr::select(-c(Cell_type)))
+colnames(heatdata_Main1g) <- heatdata_t$Sample_name
+
+heatdata_Supp1e <- t(heatdata_t_Supp1e %>% dplyr::select(-c(Cell_type)))
+colnames(heatdata_Supp1e) <- heatdata_t$Sample_name
+```
+
+```{r Make row annotations}
+
+row_annotations_Main1e <- data.frame(Annotation = selected_genes_Main1e$Annotation)
+row.names(row_annotations_Main1e) <- selected_genes_Main1e$Gene
+
+row_annotations_Main1g <- data.frame(Annotation = selected_genes_Main1g$Annotation)
+row.names(row_annotations_Main1g) <- selected_genes_Main1g$Gene
+
+row_annotations_Supp1e <- data.frame(Annotation = selected_genes_Supp1e$Annotation)
+row.names(row_annotations_Supp1e) <- selected_genes_Supp1e$Gene
+```
+
+```{r Find gap locations}
+
+gaps_Main1e <- selected_genes_Main1e %>%
+  dplyr::count(Annotation) %>%
+  filter(Annotation == "Transcription Factors") %>%
+  select(n) %>%
+  pull()
+
+gaps_Main1g <- selected_genes_Main1g %>%
+  mutate(Annotation = factor(Annotation, 
+                             levels = c("Oxidative Phosphorylation", "Cholesterol Metabolism", "Fatty Acid Metabolism", "Ion Binding", "Transcriptional Regulation"))) %>%
+  dplyr::count(Annotation) %>%
+  arrange(Annotation) %>%
+  mutate(Gaps = cumsum(n)) %>%
+  select(Gaps) %>%
+  pull()
+
+gaps_Supp1e <- selected_genes_Supp1e %>%
+  mutate(Annotation = factor(Annotation,
+                             levels = c("CTL Function", "TLRs", "Co-stimulation", "Migration", "Transcription Factors", "Cytokine Receptors"))) %>%
+  dplyr::count(Annotation) %>%
+  arrange(Annotation) %>%
+  mutate(Gaps = cumsum(n)) %>%
+  select(Gaps) %>%
+  pull()
+```
+
+```{r View heatmaps of selected genes}
+# Keep columns in the same order as the full de list
+
+# Plot Main1e
+Main1e_heatmap <- pheatmap(heatdata_Main1e[,de_order_cols],
+         cluster_rows = FALSE,
+         show_rownames = TRUE,
+         show_colnames = FALSE,
+         cluster_cols = FALSE,
+         annotation_col = col_annotations_arranged_de,
+         angle_col = 90,
+         annotation_colors = list("Cell_type" = c(effector = "red", intermediate = "blue", memory = "black")),
+         annotation_row = row_annotations_Main1e,
+         border_color = NA, 
+         annotation_names_col = FALSE,
+         annotation_names_row = FALSE,
+         color = colorRampPalette(rev(brewer.pal(10, "RdBu")))(100), 
+         gaps_row = gaps_Main1e,
+         scale = "row", 
+         cellheight = 5, 
+         cellwidth = 5, 
+         treeheight_col = 10,
+         treeheight_row = 0 
+  )
+
+# Plot Main1g
+Main1g_heatmap <- pheatmap(heatdata_Main1g[,de_order_cols],
+         cluster_rows = FALSE,
+         show_rownames = TRUE,
+         show_colnames = FALSE,
+         cluster_cols = FALSE,
+         annotation_col = col_annotations_arranged_de,
+         angle_col = 90,
+         annotation_colors = list("Cell_type" = c(effector = "red", intermediate = "blue", memory = "black")),
+         annotation_row = row_annotations_Main1g,
+         border_color = NA, 
+         annotation_names_col = FALSE,
+         annotation_names_row = FALSE,
+         color = colorRampPalette(rev(brewer.pal(10, "RdBu")))(100), 
+         gaps_row = gaps_Main1g,
+         scale = "row",
+         cellheight = 6, 
+         cellwidth = 6, 
+         treeheight_col = 10,
+         treeheight_row = 0 
+  )
+
+# Plot Supp1e
+Supp1e_heatmap <- pheatmap(heatdata_Supp1e[,de_order_cols],
+         cluster_rows = FALSE,
+         show_rownames = TRUE,
+         show_colnames = FALSE,
+         cluster_cols = FALSE,
+         annotation_col = col_annotations_arranged_de,
+         angle_col = 90,
+         annotation_colors = list("Cell_type" = c(effector = "red", intermediate = "blue", memory = "black")),
+         annotation_row = row_annotations_Supp1e,
+         border_color = NA, 
+         annotation_names_col = FALSE,
+         annotation_names_row = FALSE,
+         color = colorRampPalette(rev(brewer.pal(10, "RdBu")))(100), 
+         gaps_row = gaps_Supp1e,
+         scale = "row", 
+         cellheight = 4, 
+         cellwidth = 6, 
+         treeheight_col = 10,
+         treeheight_row = 0 
+  )
+```
+
+```{r Save heatmaps of selected genes}
+
+# Plot Main1e
+Main1e_heatmap <- pheatmap(heatdata_Main1e[,de_order_cols], 
+         cluster_rows = FALSE,
+         show_rownames = TRUE,
+         show_colnames = FALSE,
+         cluster_cols = FALSE,
+         annotation_col = col_annotations_arranged_de,
+         angle_col = 90,
+         annotation_colors = list("Cell_type" = c(effector = "red", intermediate = "blue", memory = "black")),
+         annotation_row = row_annotations_Main1e,
+         border_color = NA, 
+         annotation_names_col = FALSE,
+         annotation_names_row = FALSE,
+         color = colorRampPalette(rev(brewer.pal(10, "RdBu")))(100), 
+         gaps_row = gaps_Main1e,
+         scale = "row", 
+         cellheight = 10,
+         cellwidth = 20, 
+         filename = "figures/heatmap_selectedgenes_Main1e.png"
+  )
+
+# Plot Main1g
+Main1g_heatmap <- pheatmap(heatdata_Main1g[,de_order_cols],
+         cluster_rows = FALSE,
+         show_rownames = TRUE,
+         show_colnames = FALSE,
+         cluster_cols = FALSE,
+         annotation_col = col_annotations_arranged_de,
+         angle_col = 90,
+         annotation_colors = list("Cell_type" = c(effector = "red", intermediate = "blue", memory = "black")),
+         annotation_row = row_annotations_Main1g,
+         border_color = NA, 
+         annotation_names_col = FALSE,
+         annotation_names_row = FALSE,
+         color = colorRampPalette(rev(brewer.pal(10, "RdBu")))(100), 
+         gaps_row = gaps_Main1g,
+         scale = "row",
+         cellheight = 10, 
+         cellwidth = 20, 
+         filename = "figures/heatmap_selectedgenes_Main1g.png"
+  )
+
+# Plot Supp1e
+Supp1e_heatmap <- pheatmap(heatdata_Supp1e[,de_order_cols],
+         cluster_rows = FALSE,
+         show_rownames = TRUE,
+         show_colnames = FALSE,
+         cluster_cols = FALSE,
+         annotation_col = col_annotations_arranged_de,
+         angle_col = 90,
+         annotation_colors = list("Cell_type" = c(effector = "red", intermediate = "blue", memory = "black")),
+         annotation_row = row_annotations_Supp1e,
+         border_color = NA, 
+         annotation_names_col = FALSE,
+         annotation_names_row = FALSE,
+         color = colorRampPalette(rev(brewer.pal(10, "RdBu")))(100), 
+         gaps_row = gaps_Supp1e,
+         scale = "row", 
+         cellheight = 10,
+         cellwidth = 20, 
+         filename = "figures/heatmap_selectedgenes_Supp1e.png"
+  )
+```
+
+## Heatmap of selected genes for Hudson et al. data
+
+```{r Load Hudson data}
+# Data from: Hudson, W. H. et al. (2019) ‘Proliferating Transitory T Cells with an Effector-like Transcriptional Signature Emerge from PD-1 + Stem- Article Proliferating Transitory T Cells with an Effector-like Transcriptional Signature Emerge from PD-1 + Stem-like CD8 + T Cells during Chronic In’, Immunity. Elsevier Inc., pp. 1–16. doi: 10.1016/j.immuni.2019.11.002.
+
+# Load normalized expression data from Hudson et al.
+Hudson_early <- read_excel('/data/yosef2/users/zsteier/Toxo/analysis/GSEA/sig_data/DE Genes Hudson early.xlsx', na = "NA", sheet = 1)
+Hudson_late <- read_excel('/data/yosef2/users/zsteier/Toxo/analysis/GSEA/sig_data/DE genes Hudson late.xlsx', na = "NA", sheet = 1)
+```
+
+```{r Create Hudson metadata}
+
+# Stem (similar to Tmem): CD101-Tim3-
+# Transitory (similary to Tint): CD101-Tim3+
+# Exhausted (similar to Teff): CD101+Tim3+
+
+# Create metadata
+Hudson_early_meta <- tibble(sample = colnames(Hudson_early)[3:14]) %>%
+  mutate(Cell_type = c(rep("Naive", 3), rep("Exhausted", 3), rep("Stem", 3), rep("Transitory", 3))) %>%
+  filter(Cell_type != "Naive") %>%
+  arrange(factor(Cell_type, levels = c("Stem", "Transitory", "Exhausted")))
+
+Hudson_late_meta <- tibble(sample = colnames(Hudson_late)[3:14]) %>%
+  mutate(Cell_type = c(rep("Naive", 3), rep("Stem", 3), rep("Transitory", 3), rep("Exhausted", 3)))%>%
+  filter(Cell_type != "Naive") %>%
+  arrange(factor(Cell_type, levels = c("Stem", "Transitory", "Exhausted")))
+
+Hudson_early_meta_df <- data.frame(Hudson_early_meta, row.names = "sample")
+Hudson_late_meta_df <- data.frame(Hudson_late_meta, row.names = "sample")
+```
+
+
+```{r Select Hudson gene expression data to plot}
+# Get expression data 
+
+# Hudson early Main1g
+heatdata_Hudsonearly_Main1g <- Hudson_early %>%
+  select(c("Gene name", starts_with("CD101"))) %>%
+  filter(`Gene name` %in% selected_genes_Main1g$Gene) %>%
+  arrange(match(`Gene name`, selected_genes_Main1g$Gene)) %>% 
+  select(c("Gene name", row.names(Hudson_early_meta_df))) # arrange columns in correct order
+
+heatdata_Hudsonearly_Main1g_df <- data.frame(heatdata_Hudsonearly_Main1g %>% select(-c("Gene name")), row.names = heatdata_Hudsonearly_Main1g$`Gene name`)
+colnames(heatdata_Hudsonearly_Main1g_df) <- colnames(heatdata_Hudsonearly_Main1g %>% select(-c("Gene name")))
+
+# Hudson late Main1g
+heatdata_Hudsonlate_Main1g <- Hudson_late %>%
+  select(c("Gene name", starts_with("CD101"))) %>%
+  filter(`Gene name` %in% selected_genes_Main1g$Gene) %>%
+  arrange(match(`Gene name`, selected_genes_Main1g$Gene)) %>% 
+  select(c("Gene name", row.names(Hudson_late_meta_df))) # arrange columns in correct order
+
+heatdata_Hudsonlate_Main1g_df <- data.frame(heatdata_Hudsonlate_Main1g %>% select(-c("Gene name")), row.names = heatdata_Hudsonlate_Main1g$`Gene name`)
+colnames(heatdata_Hudsonlate_Main1g_df) <- colnames(heatdata_Hudsonlate_Main1g %>% select(-c("Gene name")))
+
+# Hudson early Supp1e
+heatdata_Hudsonearly_Supp1e <- Hudson_early %>%
+  select(c("Gene name", starts_with("CD101"))) %>%
+  filter(`Gene name` %in% selected_genes_Supp1e$Gene) %>%
+  arrange(match(`Gene name`, selected_genes_Supp1e$Gene)) %>% 
+  select(c("Gene name", row.names(Hudson_early_meta_df))) # arrange columns in correct order
+
+heatdata_Hudsonearly_Supp1e_df <- data.frame(heatdata_Hudsonearly_Supp1e %>% select(-c("Gene name")), row.names = heatdata_Hudsonearly_Supp1e$`Gene name`)
+colnames(heatdata_Hudsonearly_Supp1e_df) <- colnames(heatdata_Hudsonearly_Supp1e %>% select(-c("Gene name")))
+
+# Hudson late Supp1e
+heatdata_Hudsonlate_Supp1e <- Hudson_late %>%
+  select(c("Gene name", starts_with("CD101"))) %>%
+  filter(`Gene name` %in% selected_genes_Supp1e$Gene) %>%
+  arrange(match(`Gene name`, selected_genes_Supp1e$Gene)) %>% 
+  select(c("Gene name", row.names(Hudson_late_meta_df))) # arrange columns in correct order
+
+heatdata_Hudsonlate_Supp1e_df <- data.frame(heatdata_Hudsonlate_Supp1e %>% select(-c("Gene name")), row.names = heatdata_Hudsonlate_Supp1e$`Gene name`)
+colnames(heatdata_Hudsonlate_Supp1e_df) <- colnames(heatdata_Hudsonlate_Supp1e %>% select(-c("Gene name")))
+```
+
+```{r View Hudson heatmaps}
+
+# Plot Main1e
+Main1g_heatmap_Hudsonearly <- pheatmap(heatdata_Hudsonearly_Main1g_df,
+         cluster_rows = FALSE,
+         show_rownames = TRUE,
+         show_colnames = FALSE,
+         cluster_cols = FALSE,
+         annotation_col = Hudson_early_meta_df,
+         angle_col = 90,
+         annotation_colors = list("Cell_type" = c(Exhausted = "red", Transitory = "blue", Stem = "black")),
+         annotation_row = row_annotations_Main1g,
+         border_color = NA, 
+         annotation_names_col = FALSE,
+         annotation_names_row = FALSE,
+         color = colorRampPalette(rev(brewer.pal(10, "RdBu")))(100), 
+         gaps_row = gaps_Main1g,
+         scale = "row", 
+         cellheight = 6,
+         cellwidth = 6, 
+         treeheight_col = 10,
+         treeheight_row = 0 
+  )
+
+# Plot Main1e
+Main1g_heatmap_Hudsonlate <- pheatmap(heatdata_Hudsonlate_Main1g_df,
+         cluster_rows = FALSE,
+         show_rownames = TRUE,
+         show_colnames = FALSE,
+         cluster_cols = FALSE,
+         annotation_col = Hudson_late_meta_df,
+         angle_col = 90,
+         annotation_colors = list("Cell_type" = c(Exhausted = "red", Transitory = "blue", Stem = "black")),
+         annotation_row = row_annotations_Main1g,
+         border_color = NA, 
+         annotation_names_col = FALSE,
+         annotation_names_row = FALSE,
+         color = colorRampPalette(rev(brewer.pal(10, "RdBu")))(100), 
+         gaps_row = gaps_Main1g,
+         scale = "row", 
+         cellheight = 6, 
+         cellwidth = 6, 
+         treeheight_col = 10,
+         treeheight_row = 0 
+  )
+
+# Plot Supp1e
+Supp1e_heatmap_Hudsonearly <- pheatmap(heatdata_Hudsonearly_Supp1e_df,
+         cluster_rows = FALSE,
+         show_rownames = TRUE,
+         show_colnames = FALSE,
+         cluster_cols = FALSE,
+         annotation_col = Hudson_early_meta_df,
+         angle_col = 90,
+         annotation_colors = list("Cell_type" = c(Exhausted = "red", Transitory = "blue", Stem = "black")),
+         annotation_row = row_annotations_Supp1e,
+         border_color = NA, 
+         annotation_names_col = FALSE,
+         annotation_names_row = FALSE,
+         color = colorRampPalette(rev(brewer.pal(10, "RdBu")))(100), 
+         gaps_row = gaps_Supp1e,
+         scale = "row", 
+         cellheight = 4, 
+         cellwidth = 6, 
+         treeheight_col = 10,
+         treeheight_row = 0 
+  )
+
+# Plot Supp1e
+Supp1e_heatmap_Hudsonlate <- pheatmap(heatdata_Hudsonlate_Supp1e_df,
+         cluster_rows = FALSE,
+         show_rownames = TRUE,
+         show_colnames = FALSE,
+         cluster_cols = FALSE,
+         annotation_col = Hudson_late_meta_df,
+         angle_col = 90,
+         annotation_colors = list("Cell_type" = c(Exhausted = "red", Transitory = "blue", Stem = "black")),
+         annotation_row = row_annotations_Supp1e,
+         border_color = NA, 
+         annotation_names_col = FALSE,
+         annotation_names_row = FALSE,
+         color = colorRampPalette(rev(brewer.pal(10, "RdBu")))(100), 
+         gaps_row = gaps_Supp1e,
+         scale = "row", 
+         cellheight = 4, 
+         cellwidth = 6, 
+         treeheight_col = 10,
+         treeheight_row = 0 
+  )
+```
+
+```{r Save Hudson heatmaps}
+
+# Plot Main1g
+Main1g_heatmap <- pheatmap(heatdata_Hudsonlate_Main1g_df,
+         cluster_rows = FALSE,
+         show_rownames = TRUE,
+         show_colnames = FALSE,
+         cluster_cols = FALSE,
+         annotation_col = Hudson_late_meta_df,
+         angle_col = 90,
+         annotation_colors = list("Cell_type" = c(Exhausted = "red", Transitory = "blue", Stem = "black")),
+         annotation_row = row_annotations_Main1g,
+         border_color = NA, 
+         annotation_names_col = FALSE,
+         annotation_names_row = FALSE,
+         color = colorRampPalette(rev(brewer.pal(10, "RdBu")))(100), 
+         gaps_row = gaps_Main1g,
+         scale = "row",
+         cellheight = 10, 
+         cellwidth = 20, 
+         filename = "figures/heatmap_selectedgenes_Hudsonlate_Main1g.png"
+  )
+
+# Plot Supp1e
+Supp1e_heatmap <- pheatmap(heatdata_Hudsonlate_Supp1e_df,
+         cluster_rows = FALSE,
+         show_rownames = TRUE,
+         show_colnames = FALSE,
+         cluster_cols = FALSE,
+         annotation_col = Hudson_late_meta_df,
+         angle_col = 90,
+         annotation_colors = list("Cell_type" = c(Exhausted = "red", Transitory = "blue", Stem = "black")),
+         annotation_row = row_annotations_Supp1e,
+         border_color = NA, 
+         annotation_names_col = FALSE,
+         annotation_names_row = FALSE,
+         color = colorRampPalette(rev(brewer.pal(10, "RdBu")))(100), 
+         gaps_row = gaps_Supp1e,
+         scale = "row", 
+         cellheight = 10,
+         cellwidth = 20, 
+         filename = "figures/heatmap_selectedgenes_Hudsonlate_Supp1e.png"
+  )
+```
+
+## Heatmap of selected DE genes for Hudson et al. data
+
+```{r Select DE genes to plot}
+
+# Filter for genes upregulated specifically in Tint (DE in both pairwise tests)
+de_int <- GRA6_DE %>%
+  filter( ((memory_vs_intermediate_padj < .05) & (memory_vs_intermediate_log2FoldChange < 1)) & 
+            ((memory_vs_effector_padj < .05) & (intermediate_vs_effector_log2FoldChange > 1)) ) %>%
+  dplyr::select(Gene) %>%
+  pull()
+
+length(de_int)
+```
+
+```{r Prepare Hudson expression data for Tint genes}
+
+heatdata_Hudsonlate_Tint <- Hudson_late %>%
+  select(c("Gene name", starts_with("CD101"))) %>%
+  filter(`Gene name` %in% de_int) %>%
+  rowwise() %>%
+  mutate(counts = sum(c(`CD101-Tim3-...6`:`CD101+Tim3+...14`))) %>% # Filter out genes with zero counts
+  select(c(`Gene name`, counts, everything())) %>%
+  filter(counts > 0) %>%
+  select(-c("counts")) %>%
+  arrange(match(`Gene name`, de_int)) %>% 
+  select(c("Gene name", row.names(Hudson_late_meta_df))) # arrange columns in correct order
+
+heatdata_Hudsonlate_Tint_df <- data.frame(heatdata_Hudsonlate_Tint %>% select(-c("Gene name")), row.names = heatdata_Hudsonlate_Tint$`Gene name`)
+colnames(heatdata_Hudsonlate_Tint_df) <- colnames(heatdata_Hudsonlate_Tint %>% select(-c("Gene name")))
+```
+```{r Plot Hudson heatmap for Tint genes}
+
+# Save
+pheatmap(heatdata_Hudsonlate_Tint_df,
+         cluster_rows = TRUE,
+         show_rownames = TRUE,
+         show_colnames = FALSE,
+         cluster_cols = FALSE,
+         annotation_col = Hudson_late_meta_df,
+         angle_col = 90,
+         annotation_colors = list("Cell_type" = c(Exhausted = "red", Transitory = "blue", Stem = "black")),
+         annotation_names_col = TRUE,
+         border_color = NA, 
+         treeheight_row = 0,
+         color = colorRampPalette(rev(brewer.pal(10, "RdBu")))(100),
+         scale = "row", 
+         cellheight = 10, 
+         cellwidth = 20, 
+         filename = str_c("figures/heatmap_Tint_Hudsonlate_Supp1d.png")
+  )
+
+# View
+pheatmap(heatdata_Hudsonlate_Tint_df,
+         cluster_rows = TRUE,
+         show_rownames = TRUE,
+         show_colnames = FALSE,
+         cluster_cols = FALSE,
+         annotation_col = Hudson_late_meta_df,
+         angle_col = 90,
+         annotation_colors = list("Cell_type" = c(Exhausted = "red", Transitory = "blue", Stem = "black")),
+         annotation_names_col = TRUE,
+         border_color = NA, 
+         color = colorRampPalette(rev(brewer.pal(10, "RdBu")))(100),
+         scale = "row", 
+         cellheight = 4, 
+         cellwidth = 15
+  )
+```
+
+## GSEA results as triwise plots
+
+```{r Load custom signatures to plot}
+
+# Hudson_late_CD101negTim3neg_vs_CD101negTim3pos (Stem signature)
+late_CD101negTim3neg_vs_CD101negTim3pos <- read_excel('/data/yosef2/users/zsteier/Toxo/analysis/GSEA/sig_data/DE genes Hudson late.xlsx', na = "NA", sheet = 3)
+
+# Make sig direction tibble (Gene_Symbol, Direction)
+Hudson_late_CD101negTim3neg_vs_CD101negTim3pos <- late_CD101negTim3neg_vs_CD101negTim3pos %>%
+  filter(abs(log2FoldChange) > 1) %>% # filter on LFC
+  filter(padj < 0.05) %>% # filter on padj
+  mutate(Gene_Symbol = external_gene_name) %>%
+  mutate(Direction = case_when(log2FoldChange > 0 ~ "Up",
+                               log2FoldChange < 0 ~ "Down")) # 2,493 genes
+```
+
+```{r Collect gene expression data}
+
+# Collect gene expression data (VST normalized)
+vsd_GRA6_all <- vst(dedsRNASeq_GRA6, blind=FALSE)
+heatdata_t <- as_tibble(rownames_to_column(as.data.frame(t(assay(vsd_GRA6_all))), var = "Sample_name")) 
+
+# Add metadata
+heatdata_tnew <- heatdata_t %>%
+  left_join(GRA6_meta %>% dplyr::select(sample, cell_type), by = c("Sample_name" = "sample")) %>%
+  dplyr::select(-c(Sample_name)) %>%
+  dplyr::select(Cell_type = cell_type, everything())
+
+# Average the expression per condition
+summarized_gra6 <- heatdata_tnew %>%
+  group_by(Cell_type) %>%
+  summarize(across(everything(), mean)) 
+
+# transform to gene x cell type matrix
+summarized_gra6_t <- as.matrix(t(summarized_gra6 %>% dplyr::select(-c("Cell_type"))))
+colnames(summarized_gra6_t) <- c("effector", "intermediate", "memory")
+```
+
+```{r Collect genes in stem signature for triwise plot}
+
+# Hudson_late_CD101negTim3neg_vs_CD101negTim3pos (Stem signature: Stem vs transitory)
+Stem_sig_up <- Hudson_late_CD101negTim3neg_vs_CD101negTim3pos %>%
+  dplyr::select(Gene_Symbol, Direction) %>%
+  filter(Direction == "Up", Gene_Symbol %in% row.names(summarized_gra6_t)) %>%
+  dplyr::select(Gene_Symbol) %>%
+  pull()
+Stem_sig_down <- Hudson_late_CD101negTim3neg_vs_CD101negTim3pos %>%
+  dplyr::select(Gene_Symbol, Direction) %>%
+  filter(Direction == "Down", Gene_Symbol %in% row.names(summarized_gra6_t)) %>%
+  dplyr::select(Gene_Symbol) %>%
+  pull()
+Stem_sig_all <- unique(c(Stem_sig_up, Stem_sig_down))
+```
+
+```{r Plot Hudson Stem sig as triwise}
+
+gene_set_expression <- summarized_gra6_t[Stem_sig_up,]
+dim(gene_set_expression)
+
+# transform into barycentric coordinates (from genes x sample)
+barycoords = transformBarycentric(gene_set_expression)
+
+# plot as hexagonal plot (triwise plot)
+plotDotplot(barycoords, Gdiffexp = rownames(barycoords), 
+            baseangle = -.5,
+            colorvalues = c("black"),
+            rmax = 4, showlabels = FALSE)
+ggsave("figures/triwise_Hudson_late_Stem_up.png", dpi = 600, bg = "transparent")
+```
