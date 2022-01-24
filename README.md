@@ -4,7 +4,7 @@
 
 Derek J. Bangs, Alexandra Tsitsiklis, Zoë Steier, Shiao Wei Chan, James Kaminski, Aaron Streets, Nir Yosef, Ellen A. Robey
 
-Cell Reports, 2021.
+Cell Reports, 2022. https://doi.org/10.1016/j.celrep.2021.110266
 
 This repository contains code for the analysis performed in this manuscript and the relevant results files.
 
